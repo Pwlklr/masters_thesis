@@ -1,0 +1,40 @@
+pipeline {
+    agent any
+
+    options {
+        // Disable concurrent builds to ensure accurate time measurements
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+        stage('Fetch Ground Truth') {
+            steps {
+                script {
+                    echo "Copying VAmPI from local isolated environment to avoid network latency..."
+                }
+                // Copying from your local apps folder into the Jenkins workspace
+                sh 'rsync -a /home/pwlklr/masters_thesis/apps/VAmPI/ ./'
+            }
+        }
+
+        stage('Build Container Image') {
+            steps {
+                script {
+                    echo "Building the baseline VAmPI Docker image..."
+                }
+                // Build the image without any security gates
+                sh 'docker build -t vampi-benchmark:latest .'
+            }
+        }
+    }
+
+    post {
+        always {
+            // Clean up the workspace so the next run starts fresh
+            cleanWs()
+            // Clean up the built image to prevent Docker cache from skewing time measurements
+            sh 'docker rmi vampi-benchmark:latest || true'
+        }
+    }
+}
