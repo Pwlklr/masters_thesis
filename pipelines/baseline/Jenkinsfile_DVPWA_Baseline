@@ -45,9 +45,8 @@ pipeline {
 
     post {
         always {
-            sh 'docker compose down -v || true'
+            sh 'docker compose down --rmi local -v || true'
             cleanWs()
-            sh 'docker system prune -a -f || true'
         }
     }
 }

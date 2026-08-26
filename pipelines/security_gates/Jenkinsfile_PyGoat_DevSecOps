@@ -101,7 +101,7 @@ pipeline {
                             stage('Security Gate: DAST') {
                                 echo "--> [SCAN] Executing OWASP ZAP (DAST)..."
                                 // Mount workspace so ZAP can write the report directly to it
-                                sh 'docker run --rm --network host -v ${WORKSPACE}:/zap/wrk/:rw -t zaproxy/zap-stable zap-baseline.py -t http://localhost:8000 -J zap-report.json || true'
+                                sh 'docker run --rm --network host -u root -v ${WORKSPACE}:/zap/wrk/:rw -t zaproxy/zap-stable zap-baseline.py -t http://localhost:8000 -J zap-report.json || true'
                             }
                         } 
                         
@@ -116,7 +116,7 @@ pipeline {
                                     -v ${WORKSPACE}:/src \
                                     -v /home/pwlklr/masters_thesis/infra/nvd-cache:/usr/share/dependency-check/data \
                                     owasp/dependency-check:latest \
-                                    --scan /src --format JSON --project "PyGoat" --out /src/dependency-check-report.json || true
+                                    --scan /src --format JSON --project "PyGoat" --out /src/dependency-check-report.json --noupdate || true
                                 '''
                             }
                         } 
@@ -148,9 +148,8 @@ pipeline {
 
     post {
         always {
-            sh 'docker compose down -v || true'
+            sh 'docker compose down --rmi local -v || true'
             cleanWs()
-            sh 'docker system prune -a -f || true'
         }
     }
 }
