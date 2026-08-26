@@ -26,11 +26,12 @@ pipeline {
                 script { echo "Deploying stack to normalize baseline infrastructure time..." }
                 sh 'docker compose up -d'
                 
-                // Dynamically poll the endpoint (Port 8080)
+                // Dynamically poll the endpoint (Port 8081)
+                // Important: DVPWA's main endpoint is changed from 8080 to 8081 due to conflicting with the Jenkins agent's port.
                 sh '''#!/bin/bash
                 endTime=$((SECONDS + 30))
                 while [ $SECONDS -lt $endTime ]; do
-                    code=$(curl -s -o /dev/null -w "%{http_code}" localhost:8080 || echo "000")
+                    code=$(curl -s -o /dev/null -w "%{http_code}" localhost:8081 || echo "000")
                     if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "404" ]; then
                         echo "Service is up (HTTP $code)"
                         break
