@@ -1,0 +1,5 @@
+Application,Run_1,Run_2,Run_3,Mean_Time
+PyGoat-Baseline,80.11,81.81,81.66,81.19
+django.NV-Baseline,55.69,48.32,48.60,50.87
+DVPWA-Baseline,55.43,55.41,54.43,55.09
+VAmPI-Baseline,22.84,22.85,22.74,22.81
