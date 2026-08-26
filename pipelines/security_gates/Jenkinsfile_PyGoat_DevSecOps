@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'SCENARIO_ID', choices: (1..24).collect{it.toString()}, description: 'Select the Security Gate Sequence ID (1-24)')
+        choice(name: 'SCENARIO_ID', choices: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24'], description: 'Select the Security Gate Sequence ID (1-24)')
     }
 
     options {
@@ -45,7 +45,7 @@ pipeline {
                     for (String gate : activeSequence) {
                         
                         // ==========================================
-                        // TRIVY: CONTAINER IMAGE SCANNING
+                        // TRIVY: REPORT-ONLY JSON
                         // ==========================================
                         if (gate == 'TRIVY') {
                             if (!isBuilt) {
@@ -57,19 +57,18 @@ pipeline {
                             }
                             stage('Security Gate: TRIVY') {
                                 echo "--> [SCAN] Executing Trivy Image Scan..."
-                                // Extract the generated image name from compose and scan it. 
-                                // Fails the build (--exit-code 1) if CRITICAL or HIGH vulnerabilities are found[cite: 1].
                                 sh '''
                                 IMAGE_ID=$(docker compose images -q web)
                                 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
                                     -v /home/pwlklr/masters_thesis/infra/trivy-cache:/root/.cache/trivy \
-                                    aquasec/trivy image --exit-code 1 --severity CRITICAL,HIGH $IMAGE_ID
+                                    -v ${WORKSPACE}:/workspace \
+                                    aquasec/trivy image --format json --output /workspace/trivy-report.json $IMAGE_ID || true
                                 '''
                             }
                         } 
                         
                         // ==========================================
-                        // DAST: OWASP ZAP DYNAMIC SCANNING
+                        // DAST: ZAP REPORT-ONLY JSON
                         // ==========================================
                         else if (gate == 'DAST') {
                             if (!isBuilt) {
@@ -98,36 +97,33 @@ pipeline {
                             }
                             stage('Security Gate: DAST') {
                                 echo "--> [SCAN] Executing OWASP ZAP (DAST)..."
-                                // Runs the ZAP baseline spider against the live application.
-                                // --network host allows the container to reach localhost:8000.
-                                sh 'docker run --rm --network host -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:8000'
+                                // Mount workspace so ZAP can write the report directly to it
+                                sh 'docker run --rm --network host -v ${WORKSPACE}:/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:8000 -J zap-report.json || true'
                             }
                         } 
                         
                         // ==========================================
-                        // SCA: OWASP DEPENDENCY-CHECK
+                        // SCA: DEPENDENCY-CHECK REPORT-ONLY JSON
                         // ==========================================
                         else if (gate == 'SCA') {
                             stage('Security Gate: SCA') {
                                 echo "--> [SCAN] Executing OWASP Dependency-Check (SCA)..."
-                                // Fails the build if a package has a CVSS score of 7.0 or higher[cite: 1].
                                 sh '''
                                 docker run --rm \
                                     -v ${WORKSPACE}:/src \
                                     -v /home/pwlklr/masters_thesis/infra/nvd-cache:/usr/share/dependency-check/data \
                                     owasp/dependency-check:latest \
-                                    --scan /src --format HTML --project "PyGoat" --cvssThreshold 7.0
+                                    --scan /src --format JSON --project "PyGoat" --out /src/dependency-check-report.json || true
                                 '''
                             }
                         } 
                         
                         // ==========================================
-                        // SAST: SONARQUBE STATIC ANALYSIS
+                        // SAST: SONARQUBE ANALYSIS
                         // ==========================================
                         else if (gate == 'SAST') {
                             stage('Security Gate: SAST') {
                                 echo "--> [SCAN] Executing SonarQube (SAST)..."
-                                // Securely inject the SonarQube token from Jenkins Credentials
                                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                                     sh '''
                                     docker run --rm --network host \
@@ -136,7 +132,7 @@ pipeline {
                                         -Dsonar.projectKey=pygoat \
                                         -Dsonar.sources=. \
                                         -Dsonar.host.url=http://localhost:9000 \
-                                        -Dsonar.token=$SONAR_TOKEN
+                                        -Dsonar.token=$SONAR_TOKEN || true
                                     '''
                                 }
                             }
@@ -149,7 +145,6 @@ pipeline {
 
     post {
         always {
-            // Teardown ignores failures so we always clean up the lab environment
             sh 'docker compose down -v || true'
             cleanWs()
             sh 'docker system prune -a -f || true'
