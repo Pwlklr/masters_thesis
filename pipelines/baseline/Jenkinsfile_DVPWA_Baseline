@@ -11,7 +11,7 @@ pipeline {
         stage('Fetch Ground Truth') {
             steps {
                 script {
-                    echo "Copying DVPWA from local isolated environment to avoid network latency..."
+                    echo "Copying DVPWA from local isolated environment..."
                 }
                 // Copying from your local apps folder into the Jenkins workspace
                 sh 'rsync -a /home/pwlklr/masters_thesis/apps/dvpwa/ ./'
@@ -20,21 +20,18 @@ pipeline {
 
         stage('Build Container Image') {
             steps {
-                script {
-                    echo "Building the baseline DVPWA Docker image..."
-                }
-                // Build the image without any security gates
-                sh 'docker build -t dvpwa-benchmark:latest .'
+                script { echo "Building the baseline DVPWA Docker compose stack..." }
+                sh 'docker compose build'
             }
         }
     }
 
     post {
         always {
-            // Clean up the workspace so the next run starts fresh
             cleanWs()
-            // Clean up the built image to prevent Docker cache from skewing time measurements
-            sh 'docker rmi dvpwa-benchmark:latest || true'
+            // Clean up the specific compose images built for DVPWA
+            sh 'docker rmi dvpwa-sqli:latest dvpwa-postgres:latest || true'
+            sh 'docker system prune -f'
         }
     }
 }

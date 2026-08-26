@@ -11,19 +11,16 @@ pipeline {
         stage('Fetch Ground Truth') {
             steps {
                 script {
-                    echo "Copying django.nV from local isolated environment to avoid network latency..."
+                    echo "Copying django.nV from local isolated environment..."
                 }
-                // Copying from your local apps folder into the Jenkins workspace
                 sh 'rsync -a /home/pwlklr/masters_thesis/apps/django.nV/ ./'
             }
         }
 
         stage('Build Container Image') {
             steps {
-                script {
-                    echo "Building the baseline django.nV Docker image..."
-                }
-                // Build the image without any security gates
+                script { echo "Building the baseline django.nV Docker image..." }
+                sh 'cp /home/pwlklr/masters_thesis/infra/django.nV/Dockerfile ./'
                 sh 'docker build -t djangonv-benchmark:latest .'
             }
         }
