@@ -10,9 +10,7 @@ pipeline {
     stages {
         stage('Fetch Ground Truth') {
             steps {
-                script {
-                    echo "Copying django.nV from local isolated environment..."
-                }
+                script { echo "Copying django.nV from local isolated environment..." }
                 sh 'rsync -a /home/pwlklr/masters_thesis/apps/django.nV/ ./'
             }
         }
@@ -24,13 +22,37 @@ pipeline {
                 sh 'docker build -t djangonv-benchmark:latest .'
             }
         }
+        
+        stage('Deploy Container') {
+            steps {
+                script { echo "Deploying django.nV to normalize baseline infrastructure time..." }
+                // Run the container in detached mode
+                sh 'docker run -d --name djangonv-baseline -p 8000:8000 djangonv-benchmark:latest'
+                
+                // Dynamically poll the endpoint (Port 8000)
+                sh '''#!/bin/bash
+                endTime=$((SECONDS + 30))
+                while [ $SECONDS -lt $endTime ]; do
+                    code=$(curl -s -o /dev/null -w "%{http_code}" localhost:8000 || echo "000")
+                    if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "404" ]; then
+                        echo "Service is up (HTTP $code)"
+                        break
+                    fi
+                    sleep 1
+                done
+                '''
+            }
+        }
     }
 
     post {
         always {
-            // Clean up the workspace so the next run starts fresh
+            // 1. Force stop and remove the specific container FIRST
+            sh 'docker stop djangonv-baseline || true'
+            sh 'docker rm djangonv-baseline || true'
+            // 2. Clean the workspace
             cleanWs()
-            // Clean up the built image to prevent Docker cache from skewing time measurements
+            // 3. Remove the image
             sh 'docker rmi djangonv-benchmark:latest || true'
         }
     }

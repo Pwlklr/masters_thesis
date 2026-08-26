@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     options {
-        // Disable concurrent builds to ensure accurate time measurements
         disableConcurrentBuilds()
         timestamps()
     }
@@ -10,10 +9,7 @@ pipeline {
     stages {
         stage('Fetch Ground Truth') {
             steps {
-                script {
-                    echo "Copying DVPWA from local isolated environment..."
-                }
-                // Copying from your local apps folder into the Jenkins workspace
+                script { echo "Copying DVPWA from local isolated environment..." }
                 sh 'rsync -a /home/pwlklr/masters_thesis/apps/dvpwa/ ./'
             }
         }
@@ -24,14 +20,33 @@ pipeline {
                 sh 'docker compose build'
             }
         }
+        
+        stage('Deploy Stack') {
+            steps {
+                script { echo "Deploying stack to normalize baseline infrastructure time..." }
+                sh 'docker compose up -d'
+                
+                // Dynamically poll the endpoint (Port 8080)
+                sh '''#!/bin/bash
+                endTime=$((SECONDS + 30))
+                while [ $SECONDS -lt $endTime ]; do
+                    code=$(curl -s -o /dev/null -w "%{http_code}" localhost:8080 || echo "000")
+                    if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "404" ]; then
+                        echo "Service is up (HTTP $code)"
+                        break
+                    fi
+                    sleep 1
+                done
+                '''
+            }
+        }
     }
 
     post {
         always {
+            sh 'docker compose down -v || true'
             cleanWs()
-            // Clean up the specific compose images built for DVPWA
-            sh 'docker rmi dvpwa-sqli:latest dvpwa-postgres:latest || true'
-            sh 'docker system prune -f'
+            sh 'docker system prune -a -f || true'
         }
     }
 }

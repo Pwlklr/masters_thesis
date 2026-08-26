@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     options {
-        // Disable concurrent builds to ensure accurate time measurements
         disableConcurrentBuilds()
         timestamps()
     }
@@ -10,31 +9,44 @@ pipeline {
     stages {
         stage('Fetch Ground Truth') {
             steps {
-                script {
-                    echo "Copying VAmPI from local isolated environment..."
-                }
-                // Copying from your local apps folder into the Jenkins workspace
+                script { echo "Copying VAmPI from local isolated environment..." }
                 sh 'rsync -a /home/pwlklr/masters_thesis/apps/VAmPI/ ./'
             }
         }
 
         stage('Build Container Image') {
             steps {
-                script {
-                    echo "Building the baseline VAmPI Docker image..."
-                }
-                // Build the image without any security gates
-                sh 'docker build -t vampi-benchmark:latest .'
+                script { echo "Building the baseline VAmPI Docker compose stack..." }
+                sh 'docker compose build'
+            }
+        }
+        
+        stage('Deploy Stack') {
+            steps {
+                script { echo "Deploying stack to normalize baseline infrastructure time..." }
+                sh 'docker compose up -d'
+                
+                // Dynamically poll the endpoint (Port 5002 - Vulnerable API)
+                sh '''#!/bin/bash
+                endTime=$((SECONDS + 30))
+                while [ $SECONDS -lt $endTime ]; do
+                    code=$(curl -s -o /dev/null -w "%{http_code}" localhost:5002 || echo "000")
+                    if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "404" ]; then
+                        echo "Service is up (HTTP $code)"
+                        break
+                    fi
+                    sleep 1
+                done
+                '''
             }
         }
     }
 
     post {
         always {
-            // Clean up the workspace so the next run starts fresh
+            sh 'docker compose down -v || true'
             cleanWs()
-            // Clean up the built image to prevent Docker cache from skewing time measurements
-            sh 'docker rmi vampi-benchmark:latest || true'
+            sh 'docker system prune -a -f || true'
         }
     }
 }
