@@ -1,0 +1,158 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'SCENARIO_ID', choices: (1..24).collect{it.toString()}, description: 'Select the Security Gate Sequence ID (1-24)')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+        stage('Fetch Ground Truth') {
+            steps {
+                script { echo "--> Copying PyGoat from local isolated environment..." }
+                sh 'rsync -a /home/pwlklr/masters_thesis/apps/pygoat/ ./'
+            }
+        }
+
+        stage('Execute Security Sequence') {
+            steps {
+                script {
+                    def isBuilt = false
+                    def isDeployed = false
+
+                    def permutations = [
+                        '1':  ['SCA', 'SAST', 'TRIVY', 'DAST'], '2':  ['SCA', 'SAST', 'DAST', 'TRIVY'],
+                        '3':  ['SCA', 'TRIVY', 'SAST', 'DAST'], '4':  ['SCA', 'TRIVY', 'DAST', 'SAST'],
+                        '5':  ['SCA', 'DAST', 'SAST', 'TRIVY'], '6':  ['SCA', 'DAST', 'TRIVY', 'SAST'],
+                        '7':  ['SAST', 'SCA', 'TRIVY', 'DAST'], '8':  ['SAST', 'SCA', 'DAST', 'TRIVY'],
+                        '9':  ['SAST', 'TRIVY', 'SCA', 'DAST'], '10': ['SAST', 'TRIVY', 'DAST', 'SCA'],
+                        '11': ['SAST', 'DAST', 'SCA', 'TRIVY'], '12': ['SAST', 'DAST', 'TRIVY', 'SCA'],
+                        '13': ['TRIVY', 'SCA', 'SAST', 'DAST'], '14': ['TRIVY', 'SCA', 'DAST', 'SAST'],
+                        '15': ['TRIVY', 'SAST', 'SCA', 'DAST'], '16': ['TRIVY', 'SAST', 'DAST', 'SCA'],
+                        '17': ['TRIVY', 'DAST', 'SCA', 'SAST'], '18': ['TRIVY', 'DAST', 'SAST', 'SCA'],
+                        '19': ['DAST', 'SCA', 'SAST', 'TRIVY'], '20': ['DAST', 'SCA', 'TRIVY', 'SAST'],
+                        '21': ['DAST', 'SAST', 'SCA', 'TRIVY'], '22': ['DAST', 'SAST', 'TRIVY', 'SCA'],
+                        '23': ['DAST', 'TRIVY', 'SCA', 'SAST'], '24': ['DAST', 'TRIVY', 'SAST', 'SCA']
+                    ]
+
+                    def activeSequence = permutations[params.SCENARIO_ID]
+                    echo "Initializing Scenario ${params.SCENARIO_ID}: ${activeSequence}"
+
+                    for (String gate : activeSequence) {
+                        
+                        // ==========================================
+                        // TRIVY: CONTAINER IMAGE SCANNING
+                        // ==========================================
+                        if (gate == 'TRIVY') {
+                            if (!isBuilt) {
+                                stage('Prerequisite: Build') {
+                                    echo "--> State trigger: Building image..."
+                                    sh 'docker compose build'
+                                    isBuilt = true
+                                }
+                            }
+                            stage('Security Gate: TRIVY') {
+                                echo "--> [SCAN] Executing Trivy Image Scan..."
+                                // Extract the generated image name from compose and scan it. 
+                                // Fails the build (--exit-code 1) if CRITICAL or HIGH vulnerabilities are found[cite: 1].
+                                sh '''
+                                IMAGE_ID=$(docker compose images -q web)
+                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                                    -v /home/pwlklr/masters_thesis/infra/trivy-cache:/root/.cache/trivy \
+                                    aquasec/trivy image --exit-code 1 --severity CRITICAL,HIGH $IMAGE_ID
+                                '''
+                            }
+                        } 
+                        
+                        // ==========================================
+                        // DAST: OWASP ZAP DYNAMIC SCANNING
+                        // ==========================================
+                        else if (gate == 'DAST') {
+                            if (!isBuilt) {
+                                stage('Prerequisite: Build') {
+                                    echo "--> State trigger: Building image..."
+                                    sh 'docker compose build'
+                                    isBuilt = true
+                                }
+                            }
+                            if (!isDeployed) {
+                                stage('Prerequisite: Deploy') {
+                                    echo "--> State trigger: Deploying stack..."
+                                    sh 'docker compose up -d'
+                                    sh '''#!/bin/bash
+                                    endTime=$((SECONDS + 30))
+                                    while [ $SECONDS -lt $endTime ]; do
+                                        code=$(curl -s -o /dev/null -w "%{http_code}" localhost:8000 || echo "000")
+                                        if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "404" ]; then
+                                            break
+                                        fi
+                                        sleep 1
+                                    done
+                                    '''
+                                    isDeployed = true
+                                }
+                            }
+                            stage('Security Gate: DAST') {
+                                echo "--> [SCAN] Executing OWASP ZAP (DAST)..."
+                                // Runs the ZAP baseline spider against the live application.
+                                // --network host allows the container to reach localhost:8000.
+                                sh 'docker run --rm --network host -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:8000'
+                            }
+                        } 
+                        
+                        // ==========================================
+                        // SCA: OWASP DEPENDENCY-CHECK
+                        // ==========================================
+                        else if (gate == 'SCA') {
+                            stage('Security Gate: SCA') {
+                                echo "--> [SCAN] Executing OWASP Dependency-Check (SCA)..."
+                                // Fails the build if a package has a CVSS score of 7.0 or higher[cite: 1].
+                                sh '''
+                                docker run --rm \
+                                    -v ${WORKSPACE}:/src \
+                                    -v /home/pwlklr/masters_thesis/infra/nvd-cache:/usr/share/dependency-check/data \
+                                    owasp/dependency-check:latest \
+                                    --scan /src --format HTML --project "PyGoat" --cvssThreshold 7.0
+                                '''
+                            }
+                        } 
+                        
+                        // ==========================================
+                        // SAST: SONARQUBE STATIC ANALYSIS
+                        // ==========================================
+                        else if (gate == 'SAST') {
+                            stage('Security Gate: SAST') {
+                                echo "--> [SCAN] Executing SonarQube (SAST)..."
+                                // Securely inject the SonarQube token from Jenkins Credentials
+                                withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                                    sh '''
+                                    docker run --rm --network host \
+                                        -v ${WORKSPACE}:/usr/src \
+                                        sonarsource/sonar-scanner-cli \
+                                        -Dsonar.projectKey=pygoat \
+                                        -Dsonar.sources=. \
+                                        -Dsonar.host.url=http://localhost:9000 \
+                                        -Dsonar.token=$SONAR_TOKEN
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Teardown ignores failures so we always clean up the lab environment
+            sh 'docker compose down -v || true'
+            cleanWs()
+            sh 'docker system prune -a -f || true'
+        }
+    }
+}
