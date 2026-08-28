@@ -112,14 +112,14 @@ pipeline {
                             stage('Security Gate: SCA') {
                                 echo "--> [SCAN] Executing OWASP Dependency-Check (SCA)..."
                                 sh '''
-                                docker run --rm \
+                                docker run --rm -u root \
                                     -v ${WORKSPACE}:/src \
                                     -v /home/pwlklr/masters_thesis/infra/nvd-cache:/usr/share/dependency-check/data \
                                     owasp/dependency-check:latest \
                                     --scan /src --format JSON --project "PyGoat" --out /src/dependency-check-report.json --noupdate || true
                                 '''
                             }
-                        } 
+                        }
                         
                         // ==========================================
                         // SAST: SONARQUBE ANALYSIS
